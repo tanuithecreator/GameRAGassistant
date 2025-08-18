@@ -402,9 +402,9 @@ def show_welcome():
     """Show welcome message and instructions"""
     st.markdown("""
     ## Hi I'm XLR8, your Gaming Assistant! 🎮
-    
-    This tool helps you create an intelligent Q&A system for your game documentation, lore, and mechanics.
-    
+
+    I'll help you create an intelligent Q&A system for your game documentation, lore, and mechanics.
+
     ### Quick Start:
     1. **Initialize** the system below
     2. **Load sample data** or upload your own documents  
@@ -461,9 +461,10 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
-    st.title("🎮 Gameing Assistant")
+    ''''
+    st.title("🎮 Gaming Assistant")
     st.markdown("*Intelligent Q&A for your game documentation*")
+    ''''
     
     init_session_state()
     use_openai, openai_key, persona, difficulty, domain_filter = setup_sidebar()
