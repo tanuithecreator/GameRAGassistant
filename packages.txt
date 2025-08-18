@@ -1,4 +1,3 @@
-# System packages required for FAISS-CPU on Streamlit Cloud
 build-essential
 cmake
 pkg-config
