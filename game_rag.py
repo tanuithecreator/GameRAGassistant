@@ -461,10 +461,8 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    '''
-    st.title("🎮 Gaming Assistant")
-    st.markdown("*Intelligent Q&A for your game documentation*")
-    '''
+    # st.title("🎮 Gaming Assistant")
+    # st.markdown("*Intelligent Q&A for your game documentation*")
     
     init_session_state()
     use_openai, openai_key, persona, difficulty, domain_filter = setup_sidebar()
