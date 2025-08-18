@@ -15,8 +15,7 @@ An intelligent Q&A system specifically designed for game documentation, lore, an
 ## 🚀 Quick Start
 
 ### Option 1: Try Online (Recommended)
-[Live Demo - Coming Soon]
-
+'https://gamingragassistant-xlr8.streamlit.app/'
 ### Option 2: Run Locally
 
 1. **Clone the repository**
@@ -39,20 +38,9 @@ streamlit run gameRAG.py
 
 ## 📋 Requirements
 
-Create a `requirements.txt` file with:
+Create a `requirements.txt` file with the necessary requirements similar to the ones in the repo
 
-```
-streamlit>=1.28.0
-langchain>=0.0.350
-langchain-community>=0.0.38
-langchain-huggingface>=0.0.3
-sentence-transformers>=2.2.2
-faiss-cpu>=1.7.4
-chromadb>=0.4.15
-pandas>=2.0.0
-PyPDF2>=3.0.1
-python-multipart>=0.0.6
-```
+
 
 ## 🎯 Tech Stack
 
@@ -129,19 +117,9 @@ After loading sample data or your own documents, try:
 OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-### Customization
-Modify these constants in the code to customize for your game:
-
-```python
-GAME_DOMAINS = ["lore", "mechanics", "code", "assets", "general"]
-PERSONAS = {
-    "Your Custom Persona": "Your persona description..."
-}
-```
-
 ## 🚀 Deployment
 
-### Streamlit Cloud (Recommended)
+### Streamlit Cloud
 1. Push code to GitHub repository
 2. Connect to [Streamlit Cloud](https://streamlit.io/cloud)
 3. Deploy directly from your repository
@@ -152,11 +130,10 @@ PERSONAS = {
 
 ```
 game-rag-assistant/
-├── game_rag_enhanced.py    # Main application
+├── game_rag.py    # Main application
 ├── requirements.txt        # Python dependencies  
 ├── README.md              # This file
-├── Procfile              # Heroku deployment
-├── Dockerfile            # Container deployment
+├── packages.txt            # For necessary FAISS packages
 └── .streamlit/
     └── config.toml       # Streamlit configuration
 ```
@@ -191,4 +168,3 @@ MIT License - Feel free to use for your own game projects.
 
 - NSK AI Community for the excellent bootcamp content
 - LangChain team for the comprehensive RAG framework
-- Stream

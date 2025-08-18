@@ -1,22 +1,3 @@
-"""
-Game RAG Assistant — tailored for video games
----------------------------------------------
-
-Upgrades over your Naive RAG Chatbot:
-• Improved user onboarding with guided setup
-• Better error handling and user feedback
-• Simplified UI with progressive disclosure
-• Memory management for deployment
-• Sample data for immediate testing
-• Deployment-ready configuration
-
-Run:
-  streamlit run game_rag.py
-
-Dependencies:
-  pip install streamlit langchain langchain-community langchain-huggingface sentence-transformers chromadb faiss-cpu rapidfuzz pyyaml pandas python-multipart
-"""
-
 import os
 import io
 import tempfile
@@ -420,7 +401,7 @@ def init_session_state():
 def show_welcome():
     """Show welcome message and instructions"""
     st.markdown("""
-    ## Welcome to Game RAG Assistant! 🎮
+    ## Hi I'm XLR8, your Gaming Assistant! 🎮
     
     This tool helps you create an intelligent Q&A system for your game documentation, lore, and mechanics.
     
@@ -475,13 +456,13 @@ def setup_sidebar():
 
 def main():
     st.set_page_config(
-        page_title="Game RAG Assistant",
+        page_title="Gaming Assistant",
         page_icon="🎮",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
-    st.title("🎮 Game RAG Assistant")
+    st.title("🎮 Gameing Assistant")
     st.markdown("*Intelligent Q&A for your game documentation*")
     
     init_session_state()
