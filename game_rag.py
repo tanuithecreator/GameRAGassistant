@@ -13,7 +13,13 @@ import pandas as pd
 import numpy as np
 
 # LangChain core & community
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# Handle text_splitter import - moved to separate package in newer versions
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:
+    # Fallback for older LangChain versions
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 from langchain_community.vectorstores import Chroma, FAISS as LCFAISS
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, WebBaseLoader
 from langchain_community.retrievers import BM25Retriever
