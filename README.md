@@ -1,4 +1,4 @@
-# 🎮 Game RAG Assistant
+# 🎮 Gaming RAG Assistant
 
 An intelligent Q&A system specifically designed for game documentation, lore, and mechanics. Built as part of the NSK AI RAG Bootcamp Phase 1 project.
 
@@ -15,7 +15,7 @@ An intelligent Q&A system specifically designed for game documentation, lore, an
 ## 🚀 Quick Start
 
 ### Option 1: Try Online (Recommended)
-'https://gamingragassistant-xlr8.streamlit.app/'
+https://gamingragassistant-xlr8.streamlit.app/
 ### Option 2: Run Locally
 
 1. **Clone the repository**
