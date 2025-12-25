@@ -400,12 +400,24 @@ class GameRAG:
         try:
             loader = WebBaseLoader([url])
             docs = loader.load()
+            if not docs:
+                logger.warning(f"No content loaded from {url}")
+                return []
+            
+            # Clean and update metadata
             for doc in docs:
+                # Ensure document has content
+                if not doc.page_content or not doc.page_content.strip():
+                    continue
                 doc.metadata.update(metadata)
                 doc.metadata["source"] = url
+            
+            # Filter out empty documents
+            docs = [doc for doc in docs if doc.page_content and doc.page_content.strip()]
+            logger.info(f"Loaded {len(docs)} documents from {url}")
             return docs
         except Exception as e:
-            logger.error(f"Website loading error: {e}")
+            logger.error(f"Website loading error for {url}: {e}", exc_info=True)
             return []
     
     def index_documents(self, docs: List[Document], persist: bool = True):
@@ -456,9 +468,20 @@ class GameRAG:
             )
             
             # Rebuild sparse retriever with all splits
-            all_splits = self.text_splitter.split_documents(self.documents)
-            self.retriever_sparse = BM25Retriever.from_documents(all_splits)
-            self.retriever_sparse.k = 8
+            try:
+                all_splits = self.text_splitter.split_documents(self.documents)
+                # Filter out empty documents for BM25
+                non_empty_splits = [s for s in all_splits if s.page_content.strip()]
+                if non_empty_splits:
+                    self.retriever_sparse = BM25Retriever.from_documents(non_empty_splits)
+                    self.retriever_sparse.k = 8
+                    logger.info(f"Initialized BM25 retriever with {len(non_empty_splits)} chunks")
+                else:
+                    logger.warning("No non-empty document chunks for BM25 retriever")
+                    self.retriever_sparse = None
+            except Exception as bm25_error:
+                logger.warning(f"Failed to initialize BM25 retriever: {bm25_error}")
+                self.retriever_sparse = None
             
             logger.info(f"Successfully indexed {len(splits)} chunks from {len(docs)} documents")
             
@@ -477,51 +500,89 @@ class GameRAG:
                         top_k: int = 5) -> List[Document]:
         """Retrieve relevant context with query expansion and reranking"""
         if not self.retriever_dense:
+            logger.warning("Dense retriever not initialized")
             return []
         
         try:
             # Expand query if enabled
             search_query = expand_query(query) if use_query_expansion else query
+            logger.info(f"Retrieving for query: '{query}' (expanded: '{search_query}')")
             
             # Get dense retrieval results
-            dense_docs = self.retriever_dense.get_relevant_documents(search_query)
+            try:
+                dense_docs = self.retriever_dense.get_relevant_documents(search_query)
+                logger.info(f"Dense retrieval returned {len(dense_docs)} documents")
+            except Exception as dense_error:
+                logger.error(f"Dense retrieval failed: {dense_error}")
+                dense_docs = []
             
             # Apply domain filter if specified
-            if domain_filter:
+            if domain_filter and domain_filter != "All":
+                original_count = len(dense_docs)
                 dense_docs = [
                     doc for doc in dense_docs 
                     if doc.metadata.get("domain", "").lower() == domain_filter.lower()
                 ]
+                logger.info(f"Domain filter '{domain_filter}' reduced results from {original_count} to {len(dense_docs)}")
             
             # Get sparse retrieval results
-            all_docs = dense_docs
+            all_docs = dense_docs.copy() if dense_docs else []
+            
             if self.retriever_sparse:
-                sparse_docs = self.retriever_sparse.get_relevant_documents(search_query)
-                if domain_filter:
-                    sparse_docs = [
-                        doc for doc in sparse_docs 
-                        if doc.metadata.get("domain", "").lower() == domain_filter.lower()
-                    ]
-                
-                # Combine and deduplicate
-                all_docs = dense_docs + sparse_docs
+                try:
+                    sparse_docs = self.retriever_sparse.get_relevant_documents(search_query)
+                    logger.info(f"Sparse retrieval returned {len(sparse_docs)} documents")
+                    
+                    if domain_filter and domain_filter != "All":
+                        original_sparse = len(sparse_docs)
+                        sparse_docs = [
+                            doc for doc in sparse_docs 
+                            if doc.metadata.get("domain", "").lower() == domain_filter.lower()
+                        ]
+                        logger.info(f"Domain filter reduced sparse results from {original_sparse} to {len(sparse_docs)}")
+                    
+                    # Combine and deduplicate
+                    all_docs.extend(sparse_docs)
+                except Exception as sparse_error:
+                    logger.warning(f"Sparse retrieval failed: {sparse_error}, continuing with dense results only")
+            
+            # Deduplicate documents
+            if all_docs:
                 seen_content = set()
                 unique_docs = []
                 for doc in all_docs:
-                    content_hash = hash(doc.page_content[:200])  # Use first 200 chars as hash
-                    if content_hash not in seen_content:
-                        seen_content.add(content_hash)
-                        unique_docs.append(doc)
+                    # Use a more robust deduplication method
+                    content_preview = doc.page_content[:300].strip()
+                    if content_preview:
+                        content_hash = hash(content_preview)
+                        if content_hash not in seen_content:
+                            seen_content.add(content_hash)
+                            unique_docs.append(doc)
                 all_docs = unique_docs
+                logger.info(f"After deduplication: {len(all_docs)} unique documents")
             
             # Rerank if enabled
             if use_reranking and all_docs:
-                all_docs = rerank_documents(query, all_docs, top_k=top_k)
+                try:
+                    all_docs = rerank_documents(query, all_docs, top_k=top_k)
+                    logger.info(f"After reranking: {len(all_docs)} documents")
+                except Exception as rerank_error:
+                    logger.warning(f"Reranking failed: {rerank_error}, using original order")
             
-            return all_docs[:top_k]
+            result = all_docs[:top_k] if all_docs else []
+            logger.info(f"Final retrieval result: {len(result)} documents")
+            return result
             
         except Exception as e:
-            logger.error(f"Retrieval error: {e}")
+            logger.error(f"Retrieval error: {e}", exc_info=True)
+            # Fallback: try to return any documents from vectorstore if available
+            try:
+                if self.vectorstore and hasattr(self.vectorstore, 'similarity_search'):
+                    fallback_docs = self.vectorstore.similarity_search(query, k=min(top_k, 3))
+                    logger.info(f"Fallback retrieval returned {len(fallback_docs)} documents")
+                    return fallback_docs
+            except:
+                pass
             return []
     
     def generate_answer(self, query: str, context_docs: List[Document], 
@@ -878,14 +939,16 @@ def main():
                                 metadata = {"domain": web_domain, "title": web_title, "source": "website"}
                                 docs = rag.load_website(url, metadata)
                                 if docs:
-                                    rag.index_documents(docs)
+                                    with st.spinner(f"Indexing {len(docs)} document(s)..."):
+                                        rag.index_documents(docs)
                                     st.session_state.documents_loaded += len(docs)
-                                    st.success(f"✅ Loaded website content")
+                                    st.success(f"✅ Loaded and indexed {len(docs)} document(s) from website")
                                     st.rerun()
                                 else:
-                                    st.error("❌ Failed to load website")
+                                    st.error("❌ Failed to load website content. The URL might be inaccessible or contain no text content.")
                             except Exception as e:
                                 st.error(f"❌ Error loading website: {str(e)}")
+                                logger.error(f"Website loading error in UI: {e}", exc_info=True)
         
         # Status info and controls
         if st.session_state.documents_loaded > 0:
