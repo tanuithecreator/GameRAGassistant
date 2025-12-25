@@ -17,10 +17,19 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma, FAISS as LCFAISS
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, WebBaseLoader
 from langchain_community.retrievers import BM25Retriever
-from langchain.schema import Document
+
+# Handle both old and new LangChain import paths
+try:
+    from langchain_core.documents import Document
+    from langchain_core.runnables import RunnablePassthrough
+    from langchain_core.output_parsers import StrOutputParser
+except ImportError:
+    # Fallback for older LangChain versions
+    from langchain.schema import Document
+    from langchain.schema.runnable import RunnablePassthrough
+    from langchain.schema.output_parser import StrOutputParser
+
 from langchain.prompts import ChatPromptTemplate
-from langchain.schema.runnable import RunnablePassthrough
-from langchain.schema.output_parser import StrOutputParser
 from langchain.memory import ConversationBufferWindowMemory
 
 # Embeddings
