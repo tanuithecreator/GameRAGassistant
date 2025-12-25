@@ -35,8 +35,23 @@ except ImportError:
     from langchain.schema.runnable import RunnablePassthrough
     from langchain.schema.output_parser import StrOutputParser
 
-from langchain.prompts import ChatPromptTemplate
-from langchain.memory import ConversationBufferWindowMemory
+# Handle prompts import - moved to langchain_core in newer versions
+try:
+    from langchain_core.prompts import ChatPromptTemplate
+except ImportError:
+    # Fallback for older LangChain versions
+    from langchain.prompts import ChatPromptTemplate
+
+# Handle memory import - typically stays in langchain.memory
+try:
+    from langchain.memory import ConversationBufferWindowMemory
+except ImportError:
+    # Fallback for very old versions
+    try:
+        from langchain.memory.buffer_window import ConversationBufferWindowMemory
+    except ImportError:
+        # Last resort - might not be available
+        ConversationBufferWindowMemory = None
 
 # Embeddings
 try:
@@ -227,10 +242,17 @@ class GameRAG:
         self.documents = []
         
         # Conversation memory
-        self.memory = ConversationBufferWindowMemory(
-            k=memory_window,
-            return_messages=True
-        ) if use_conversation_memory else None
+        if use_conversation_memory and ConversationBufferWindowMemory is not None:
+            try:
+                self.memory = ConversationBufferWindowMemory(
+                    k=memory_window,
+                    return_messages=True
+                )
+            except Exception as e:
+                logger.warning(f"Could not initialize ConversationBufferWindowMemory: {e}")
+                self.memory = None
+        else:
+            self.memory = None
         
         # Vector store persistence
         VECTOR_STORE_DIR.mkdir(exist_ok=True)
