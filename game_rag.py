@@ -508,10 +508,27 @@ class GameRAG:
             search_query = expand_query(query) if use_query_expansion else query
             logger.info(f"Retrieving for query: '{query}' (expanded: '{search_query}')")
             
-            # Get dense retrieval results
+            # Get dense retrieval results - use vectorstore directly for reliability
+            dense_docs = []
             try:
-                dense_docs = self.retriever_dense.get_relevant_documents(search_query)
-                logger.info(f"Dense retrieval returned {len(dense_docs)} documents")
+                # Use vectorstore similarity_search directly (most reliable method)
+                if self.vectorstore and hasattr(self.vectorstore, 'similarity_search'):
+                    dense_docs = self.vectorstore.similarity_search(search_query, k=8)
+                    logger.info(f"Dense retrieval (vectorstore) returned {len(dense_docs)} documents")
+                # Fallback: try retriever if vectorstore is not available
+                elif self.retriever_dense:
+                    # Try new API first (invoke)
+                    if hasattr(self.retriever_dense, 'invoke'):
+                        dense_docs = self.retriever_dense.invoke(search_query)
+                        logger.info(f"Dense retrieval (retriever invoke) returned {len(dense_docs)} documents")
+                    # Fallback to old API (get_relevant_documents)
+                    elif hasattr(self.retriever_dense, 'get_relevant_documents'):
+                        dense_docs = self.retriever_dense.get_relevant_documents(search_query)
+                        logger.info(f"Dense retrieval (retriever get_relevant) returned {len(dense_docs)} documents")
+                    else:
+                        logger.warning("Dense retriever has no usable methods")
+                else:
+                    logger.warning("No vectorstore or dense retriever available")
             except Exception as dense_error:
                 logger.error(f"Dense retrieval failed: {dense_error}")
                 dense_docs = []
@@ -530,7 +547,14 @@ class GameRAG:
             
             if self.retriever_sparse:
                 try:
-                    sparse_docs = self.retriever_sparse.get_relevant_documents(search_query)
+                    # Try new API first (invoke)
+                    if hasattr(self.retriever_sparse, 'invoke'):
+                        sparse_docs = self.retriever_sparse.invoke(search_query)
+                    # Fallback to old API (get_relevant_documents)
+                    elif hasattr(self.retriever_sparse, 'get_relevant_documents'):
+                        sparse_docs = self.retriever_sparse.get_relevant_documents(search_query)
+                    else:
+                        sparse_docs = []
                     logger.info(f"Sparse retrieval returned {len(sparse_docs)} documents")
                     
                     if domain_filter and domain_filter != "All":
