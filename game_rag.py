@@ -188,29 +188,70 @@ def calculate_sentence_scores(query: str, sentences: List[str]) -> List[Tuple[fl
     
     return sorted(scored, reverse=True, key=lambda x: x[0])
 
-def rerank_documents(query: str, docs: List[Document], top_k: int = 5) -> List[Document]:
-    """Rerank documents using query-document similarity"""
+def rerank_documents(query: str, docs: List[Document], top_k: int = 5, embeddings=None) -> List[Document]:
+    """Rerank documents using improved similarity scoring"""
     if not docs:
         return []
     
     query_words = set(re.findall(r'\b\w+\b', query.lower()))
     scored_docs = []
     
-    for doc in docs:
-        content = doc.page_content.lower()
-        content_words = set(re.findall(r'\b\w+\b', content))
-        
-        # Calculate Jaccard similarity
-        intersection = len(query_words.intersection(content_words))
-        union = len(query_words.union(content_words))
-        similarity = intersection / union if union > 0 else 0
-        
-        # Boost if query terms appear early in document
-        content_first_100 = content[:100]
-        early_matches = sum(1 for word in query_words if word in content_first_100)
-        similarity += early_matches * 0.1
-        
-        scored_docs.append((similarity, doc))
+    # Try embedding-based reranking if embeddings are available
+    use_embedding_rerank = embeddings is not None
+    
+    if use_embedding_rerank:
+        try:
+            # Get query embedding
+            query_embedding = embeddings.embed_query(query)
+            query_embedding = np.array(query_embedding)
+            
+            for doc in docs:
+                # Get document embedding
+                doc_embedding = embeddings.embed_query(doc.page_content[:512])  # Use first 512 chars for efficiency
+                doc_embedding = np.array(doc_embedding)
+                
+                # Cosine similarity (embeddings should be normalized)
+                cosine_sim = np.dot(query_embedding, doc_embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding) + 1e-8
+                )
+                
+                # Combine with lexical matching for robustness
+                content = doc.page_content.lower()
+                content_words = set(re.findall(r'\b\w+\b', content))
+                lexical_overlap = len(query_words.intersection(content_words)) / max(len(query_words), 1)
+                
+                # Weighted combination: 70% semantic, 30% lexical
+                final_score = 0.7 * cosine_sim + 0.3 * lexical_overlap
+                
+                scored_docs.append((final_score, doc))
+        except Exception as e:
+            logger.warning(f"Embedding-based reranking failed: {e}, falling back to lexical reranking")
+            use_embedding_rerank = False
+    
+    # Fallback to improved lexical reranking
+    if not use_embedding_rerank:
+        for doc in docs:
+            content = doc.page_content.lower()
+            content_words = set(re.findall(r'\b\w+\b', content))
+            
+            # Improved Jaccard similarity
+            intersection = len(query_words.intersection(content_words))
+            union = len(query_words.union(content_words))
+            jaccard_sim = intersection / union if union > 0 else 0
+            
+            # Boost if query terms appear early in document
+            content_first_200 = content[:200]
+            early_matches = sum(1 for word in query_words if word in content_first_200)
+            jaccard_sim += early_matches * 0.15
+            
+            # Boost for exact phrase matches
+            query_phrases = query.lower().split()
+            if len(query_phrases) > 1:
+                phrase_boost = sum(1 for i in range(len(query_phrases)-1) 
+                                 if ' '.join(query_phrases[i:i+2]) in content) * 0.2
+                jaccard_sim += phrase_boost
+            
+            scored_docs.append((jaccard_sim, doc))
     
     # Sort by score and return top_k
     scored_docs.sort(reverse=True, key=lambda x: x[0])
@@ -229,9 +270,10 @@ class GameRAG:
         # Initialize components
         self.llm = None
         self.embeddings = None
+        # Larger chunks preserve more context, better for semantic understanding
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,
-            chunk_overlap=150,
+            chunk_size=1200,  # Increased from 800 for better context
+            chunk_overlap=200,  # Increased from 150 for smoother transitions
             separators=["\n\n", "\n", ". ", " ", ""]
         )
         
@@ -271,17 +313,22 @@ class GameRAG:
                 )
                 logger.info("Using OpenAI models")
             else:
+                # Use better embedding model for improved semantic search
+                # all-MiniLM-L12-v2 is significantly better than L6-v2 while still being efficient
                 self.embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2",
-                    model_kwargs={'device': 'cpu'}
+                    model_name="sentence-transformers/all-MiniLM-L12-v2",
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}  # Normalize for cosine similarity
                 )
-                logger.info("Using HuggingFace embeddings (no generative LLM)")
+                logger.info("Using HuggingFace embeddings all-MiniLM-L12-v2 (no generative LLM)")
         except Exception as e:
             logger.error(f"Model setup error: {e}")
             # Fallback to HuggingFace
             try:
                 self.embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                    model_name="sentence-transformers/all-MiniLM-L12-v2",
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}
                 )
             except Exception as e2:
                 logger.error(f"Failed to initialize embeddings: {e2}")
@@ -324,7 +371,7 @@ class GameRAG:
                     self.embeddings,
                     allow_dangerous_deserialization=True
                 )
-                self.retriever_dense = self.vectorstore.as_retriever(search_kwargs={"k": 5})
+                self.retriever_dense = self.vectorstore.as_retriever(search_kwargs={"k": 20})
                 logger.info(f"Loaded FAISS vectorstore from {load_path}")
                 return True
             except:
@@ -462,9 +509,9 @@ class GameRAG:
                     self.vectorstore = Chroma.from_documents(all_splits, self.embeddings)
                     logger.info("Recreated Chroma vector store with all documents")
             
-            # Setup retrievers
+            # Setup retrievers - retrieve more candidates for better reranking
             self.retriever_dense = self.vectorstore.as_retriever(
-                search_kwargs={"k": 8}  # Retrieve more for reranking
+                search_kwargs={"k": 20}  # Increased from 8 to 20 for better candidate selection
             )
             
             # Rebuild sparse retriever with all splits
@@ -474,7 +521,7 @@ class GameRAG:
                 non_empty_splits = [s for s in all_splits if s.page_content.strip()]
                 if non_empty_splits:
                     self.retriever_sparse = BM25Retriever.from_documents(non_empty_splits)
-                    self.retriever_sparse.k = 8
+                    self.retriever_sparse.k = 15  # Increased from 8 for better sparse retrieval
                     logger.info(f"Initialized BM25 retriever with {len(non_empty_splits)} chunks")
                 else:
                     logger.warning("No non-empty document chunks for BM25 retriever")
@@ -513,7 +560,8 @@ class GameRAG:
             try:
                 # Use vectorstore similarity_search directly (most reliable method)
                 if self.vectorstore and hasattr(self.vectorstore, 'similarity_search'):
-                    dense_docs = self.vectorstore.similarity_search(search_query, k=8)
+                    # Retrieve more candidates for better reranking
+                    dense_docs = self.vectorstore.similarity_search(search_query, k=20)
                     logger.info(f"Dense retrieval (vectorstore) returned {len(dense_docs)} documents")
                 # Fallback: try retriever if vectorstore is not available
                 elif self.retriever_dense:
@@ -588,7 +636,8 @@ class GameRAG:
             # Rerank if enabled
             if use_reranking and all_docs:
                 try:
-                    all_docs = rerank_documents(query, all_docs, top_k=top_k)
+                    # Pass embeddings for better reranking
+                    all_docs = rerank_documents(query, all_docs, top_k=top_k, embeddings=self.embeddings)
                     logger.info(f"After reranking: {len(all_docs)} documents")
                 except Exception as rerank_error:
                     logger.warning(f"Reranking failed: {rerank_error}, using original order")
