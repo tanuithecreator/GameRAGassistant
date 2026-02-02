@@ -66,6 +66,13 @@ try:
 except ImportError:
     HAS_OPENAI = False
 
+# Optional Groq (graceful fallback)
+try:
+    from langchain_groq import ChatGroq
+    HAS_GROQ = True
+except ImportError:
+    HAS_GROQ = False
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -261,10 +268,17 @@ def rerank_documents(query: str, docs: List[Document], top_k: int = 5, embedding
 # Core RAG System
 # ------------------------------
 class GameRAG:
-    def __init__(self, use_openai: bool = False, openai_api_key: Optional[str] = None,
-                 use_conversation_memory: bool = True, memory_window: int = 5):
-        self.use_openai = use_openai and HAS_OPENAI
-        self.openai_api_key = openai_api_key
+    def __init__(self, llm_provider: Optional[str] = None, openai_api_key: Optional[str] = None,
+                 groq_api_key: Optional[str] = None, use_conversation_memory: bool = True,
+                 memory_window: int = 5):
+        # llm_provider: "openai", "groq", or None (extractive only)
+        self.llm_provider = (llm_provider or "").strip().lower() or None
+        if self.llm_provider == "openai" and not HAS_OPENAI:
+            self.llm_provider = None
+        if self.llm_provider == "groq" and not HAS_GROQ:
+            self.llm_provider = None
+        self.openai_api_key = (openai_api_key or "").strip() or None
+        self.groq_api_key = (groq_api_key or "").strip() or None
         self.use_conversation_memory = use_conversation_memory
         
         # Initialize components
@@ -304,7 +318,7 @@ class GameRAG:
     def _setup_models(self):
         """Initialize embeddings and LLM"""
         try:
-            if self.use_openai and self.openai_api_key:
+            if self.llm_provider == "openai" and self.openai_api_key:
                 self.embeddings = OpenAIEmbeddings(openai_api_key=self.openai_api_key)
                 self.llm = ChatOpenAI(
                     model="gpt-3.5-turbo",
@@ -312,18 +326,28 @@ class GameRAG:
                     openai_api_key=self.openai_api_key
                 )
                 logger.info("Using OpenAI models")
-            else:
-                # Use better embedding model for improved semantic search
-                # all-MiniLM-L12-v2 is significantly better than L6-v2 while still being efficient
+            elif self.llm_provider == "groq" and self.groq_api_key:
                 self.embeddings = HuggingFaceEmbeddings(
                     model_name="sentence-transformers/all-MiniLM-L12-v2",
                     model_kwargs={'device': 'cpu'},
-                    encode_kwargs={'normalize_embeddings': True}  # Normalize for cosine similarity
+                    encode_kwargs={'normalize_embeddings': True}
+                )
+                self.llm = ChatGroq(
+                    model="llama-3.1-8b-instant",
+                    temperature=0.3,
+                    api_key=self.groq_api_key
+                )
+                logger.info("Using Groq LLM with HuggingFace embeddings")
+            else:
+                # Use better embedding model for improved semantic search
+                self.embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L12-v2",
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}
                 )
                 logger.info("Using HuggingFace embeddings all-MiniLM-L12-v2 (no generative LLM)")
         except Exception as e:
             logger.error(f"Model setup error: {e}")
-            # Fallback to HuggingFace
             try:
                 self.embeddings = HuggingFaceEmbeddings(
                     model_name="sentence-transformers/all-MiniLM-L12-v2",
@@ -333,7 +357,8 @@ class GameRAG:
             except Exception as e2:
                 logger.error(f"Failed to initialize embeddings: {e2}")
                 raise
-            self.use_openai = False
+            self.llm = None
+            self.llm_provider = None
     
     def save_vectorstore(self, name: str = "default"):
         """Save vectorstore to disk for persistence"""
@@ -796,7 +821,7 @@ Answer:"""
         if seen_sources:
             answer += f"\n\n**Sources:**\n" + "\n".join([f"- {s}" for s in sorted(seen_sources)])
         
-        answer += "\n\n*💡 Tip: Enable OpenAI API for generated, conversational answers instead of extracted text.*"
+        answer += "\n\n*💡 Tip: Enable OpenAI or Groq API in the sidebar for generated, conversational answers instead of extracted text.*"
         
         return answer
 
@@ -837,19 +862,43 @@ def setup_sidebar():
     with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # Model selection
-        use_openai = st.checkbox("Use OpenAI (better answers)", value=False)
-        openai_key = None
+        # LLM provider selection
+        provider_options = ["None (extractive only)"]
+        if HAS_OPENAI:
+            provider_options.append("OpenAI")
+        if HAS_GROQ:
+            provider_options.append("Groq")
+        llm_provider_label = st.radio(
+            "LLM Provider",
+            options=provider_options,
+            help="Choose which API to use for generated answers, or extractive-only mode."
+        )
+        llm_provider = None
+        if llm_provider_label == "OpenAI":
+            llm_provider = "openai"
+        elif llm_provider_label == "Groq":
+            llm_provider = "groq"
         
-        if use_openai:
+        openai_key = None
+        groq_key = None
+        if llm_provider == "openai":
             openai_key = st.text_input(
-                "OpenAI API Key", 
-                type="password", 
+                "OpenAI API Key",
+                type="password",
                 placeholder="sk-...",
                 help="Get your API key from https://platform.openai.com/"
             )
             if not openai_key:
                 st.warning("Provide API key for OpenAI features")
+        elif llm_provider == "groq":
+            groq_key = st.text_input(
+                "Groq API Key",
+                type="password",
+                placeholder="gsk_...",
+                help="Get your API key from https://console.groq.com/"
+            )
+            if not groq_key:
+                st.warning("Provide API key for Groq features")
         
         st.divider()
         
@@ -882,8 +931,9 @@ def setup_sidebar():
         )
         
         return {
-            "use_openai": use_openai,
+            "llm_provider": llm_provider,
             "openai_key": openai_key,
+            "groq_key": groq_key,
             "persona": persona,
             "difficulty": difficulty,
             "domain_filter": domain_filter,
@@ -915,8 +965,9 @@ def main():
                 with st.spinner("Setting up RAG system..."):
                     try:
                         st.session_state.rag_system = GameRAG(
-                            use_openai=config["use_openai"],
+                            llm_provider=config["llm_provider"],
                             openai_api_key=config["openai_key"],
+                            groq_api_key=config["groq_key"],
                             use_conversation_memory=config["use_conversation_memory"]
                         )
                         # Try to load existing vectorstore
